@@ -33,6 +33,7 @@ __pycache__/
 
 # Virtualenv
 venv/
+envs/
 
 # Temp files
 temp/
