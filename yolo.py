@@ -11,30 +11,31 @@
 #
 # *******************************************************************
 
-import os
-import colorsys
-import numpy as np
-import cv2
-
-from model import eval
-
-from keras import backend as K
+from .model import eval
 from keras.models import load_model
-from timeit import default_timer as timer
 from PIL import ImageDraw, Image
-
+from timeit import default_timer as timer
+import colorsys
+import cv2
+import imutils
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import tensorflow as tf
 
 class YOLO(object):
-    def __init__(self, args):
-        self.args = args
-        self.model_path = args.model
-        self.classes_path = args.classes
-        self.anchors_path = args.anchors
+    def __init__(self, model_path, classes_path, anchors_path, model_image_size, score, iou):
+        self.model_path = model_path
+        self.classes_path = classes_path
+        self.anchors_path = anchors_path
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
-        self.sess = K.get_session()
+        tf.compat.v1.disable_eager_execution()
+        self.sess = tf.compat.v1.keras.backend.get_session()
+        self.model_image_size = model_image_size
+        self.score = score
+        self.iou = iou
         self.boxes, self.scores, self.classes = self._generate()
-        self.model_image_size = args.img_size
 
     def _get_class(self):
         classes_path = os.path.expanduser(self.classes_path)
@@ -65,8 +66,8 @@ class YOLO(object):
             self.yolo_model.load_weights(self.model_path)
         else:
             assert self.yolo_model.layers[-1].output_shape[-1] == \
-                   num_anchors / len(self.yolo_model.output) * (
-                           num_classes + 5), \
+                num_anchors / len(self.yolo_model.output) * (
+                num_classes + 5), \
                 'Mismatch between model and given anchor and class sizes'
         print(
             '*** {} model, anchors, and classes loaded.'.format(model_path))
@@ -85,15 +86,18 @@ class YOLO(object):
         np.random.seed(None)
 
         # generate output tensor targets for filtered bounding boxes.
-        self.input_image_shape = K.placeholder(shape=(2,))
+        # self.input_image_shape = K.placeholder(shape=(2,))
+        self.input_image_shape = tf.compat.v1.keras.backend.placeholder(
+            shape=(2,))
         boxes, scores, classes = eval(self.yolo_model.output, self.anchors,
-                                           len(self.class_names),
-                                           self.input_image_shape,
-                                           score_threshold=self.args.score,
-                                           iou_threshold=self.args.iou)
+                                      len(self.class_names),
+                                      self.input_image_shape,
+                                      score_threshold=self.score,
+                                      iou_threshold=self.iou)
         return boxes, scores, classes
 
     def detect_image(self, image):
+        image = Image.fromarray(image)
         start_time = timer()
         if self.model_image_size != (None, None):
             assert self.model_image_size[
@@ -116,7 +120,7 @@ class YOLO(object):
             feed_dict={
                 self.yolo_model.input: image_data,
                 self.input_image_shape: [image.size[1], image.size[0]],
-                K.learning_phase(): 0
+                tf.compat.v1.keras.backend.learning_phase(): 0
             })
         print('*** Found {} face(s) for this image'.format(len(out_boxes)))
         thickness = (image.size[0] + image.size[1]) // 400
@@ -149,7 +153,6 @@ class YOLO(object):
 
     def close_session(self):
         self.sess.close()
-
 
 def letterbox_image(image, size):
     '''Resize image with unchanged aspect ratio using padding'''
@@ -202,7 +205,8 @@ def detect_video(model, video_path=None, output=None):
     isOutput = True if output != "" else False
     if isOutput:
         output_fn = 'output_video.avi'
-        out = cv2.VideoWriter(os.path.join(output, output_fn), video_fourcc, video_fps, video_size)
+        out = cv2.VideoWriter(os.path.join(output, output_fn),
+                              video_fourcc, video_fps, video_size)
 
     accum_time = 0
     curr_fps = 0
